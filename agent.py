@@ -1,33 +1,31 @@
 import os
+import json
+import re
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from pypdf import PdfReader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_groq import ChatGroq
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
 
 load_dotenv()
 
 class ResumeAnalysisAgent:
     def __init__(self):
-        self.api_key = os.getenv("GOOGLE_API_KEY")
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.cutoff_score = 75
         self.vector_store = None
         self.resume_text = None
         self.jd_text = None
         self.temp_files = []
 
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite",
-            google_api_key=self.api_key,
+        self.llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            groq_api_key=self.groq_api_key,
             temperature=0.3
         )
 
-        # Local embeddings - no API needed, no version issues
         self.embeddings = HuggingFaceEmbeddings(
             model_name="all-MiniLM-L6-v2"
         )
@@ -45,7 +43,6 @@ class ResumeAnalysisAgent:
             tmp.write(uploaded_file.read())
             tmp_path = tmp.name
             self.temp_files.append(tmp_path)
-
         if suffix == ".pdf":
             return self.extract_text_from_pdf(tmp_path)
         else:
@@ -62,50 +59,38 @@ class ResumeAnalysisAgent:
         return self.vector_store
 
     def extract_skills_from_jd(self, jd_text):
-        prompt = f"""
-        Extract all required technical skills, tools, and technologies from this job description.
-        Return ONLY a comma-separated list of skills, nothing else.
-        
-        Job Description:
-        {jd_text}
-        """
+        prompt = f"""Extract all required technical skills, tools, and technologies from this job description.
+Return ONLY a comma-separated list of skills, nothing else.
+Job Description:
+{jd_text}"""
         response = self.llm.invoke(prompt)
-        skills_text = response.content.strip()
-        skills = [s.strip() for s in skills_text.split(",") if s.strip()]
+        skills = [s.strip() for s in response.content.strip().split(",") if s.strip()]
         return skills
 
-    def analyze_skill_semantically(self, skill, resume_text):
-        prompt = f"""
-        Does this resume demonstrate knowledge or experience with "{skill}"?
-        Look for direct mentions, related tools, or implied experience.
-        
-        Resume:
-        {resume_text[:2000]}
-        
-        Answer with ONLY: YES or NO
-        """
+    def analyze_all_skills_at_once(self, skills, resume_text):
+        skills_list = "\n".join([f"- {s}" for s in skills])
+        prompt = f"""Analyze this resume and for each skill below, answer YES or NO.
+Return ONLY a JSON object like: {{"Python": "YES", "SQL": "NO"}}
+
+Skills:
+{skills_list}
+
+Resume:
+{resume_text[:3000]}
+
+Return ONLY the JSON:"""
         response = self.llm.invoke(prompt)
-        answer = response.content.strip().upper()
-        return "YES" in answer
-
-    def semantic_skill_analysis(self, skills, resume_text):
-        strengths = []
-        weaknesses = []
-
-        def check_skill(skill):
-            found = self.analyze_skill_semantically(skill, resume_text)
-            return skill, found
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(check_skill, skills))
-
-        for skill, found in results:
-            if found:
-                strengths.append(skill)
-            else:
-                weaknesses.append(skill)
-
-        return strengths, weaknesses
+        content = response.content.strip()
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            try:
+                result = json.loads(json_match.group())
+                strengths = [s for s, v in result.items() if "YES" in str(v).upper()]
+                weaknesses = [s for s, v in result.items() if "NO" in str(v).upper()]
+                return strengths, weaknesses
+            except:
+                pass
+        return [], skills.copy()
 
     def analyze_resume(self, resume_text, jd_text=None, mode="ats"):
         self.resume_text = resume_text
@@ -120,8 +105,7 @@ class ResumeAnalysisAgent:
                 "Project Management", "Leadership", "Excel"
             ]
 
-        strengths, weaknesses = self.semantic_skill_analysis(skills, resume_text)
-
+        strengths, weaknesses = self.analyze_all_skills_at_once(skills, resume_text)
         total = len(skills)
         score = int((len(strengths) / total) * 100) if total > 0 else 0
         selected = score >= self.cutoff_score
@@ -138,46 +122,30 @@ class ResumeAnalysisAgent:
         if not self.vector_store:
             return "Please upload a resume first."
 
-        retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
+        docs = self.vector_store.similarity_search(question, k=3)
+        context = "\n".join([d.page_content for d in docs])
 
-        prompt_template = """
-        Use the resume context below to answer the question accurately.
-        If the answer is not in the resume, say "This information is not in the resume."
-        
-        Context: {context}
-        Question: {question}
-        Answer:
-        """
+        prompt = f"""Use the resume context below to answer the question accurately.
+If the answer is not in the resume, say "This information is not in the resume."
 
-        prompt = PromptTemplate(
-            template=prompt_template,
-            input_variables=["context", "question"]
-        )
-
-        chain = RetrievalQA.from_chain_type(
-            llm=self.llm,
-            retriever=retriever,
-            chain_type_kwargs={"prompt": prompt}
-        )
-
-        result = chain.invoke({"query": question})
-        return result["result"]
+Context: {context}
+Question: {question}
+Answer:"""
+        response = self.llm.invoke(prompt)
+        return response.content
 
     def generate_interview_questions(self, question_type, difficulty, count):
         if not self.resume_text:
             return "Please upload a resume first."
 
-        prompt = f"""
-        Based on this resume, generate {count} {difficulty} level {question_type} interview questions.
-        Make questions specific to the candidate's actual experience and skills.
-        Number each question.
-        
-        Resume:
-        {self.resume_text[:3000]}
-        
-        Generate exactly {count} questions:
-        """
+        prompt = f"""Based on this resume, generate {count} {difficulty} level {question_type} interview questions.
+Make questions specific to the candidate's actual experience and skills.
+Number each question.
 
+Resume:
+{self.resume_text[:3000]}
+
+Generate exactly {count} questions:"""
         response = self.llm.invoke(prompt)
         return response.content
 
@@ -186,21 +154,15 @@ class ResumeAnalysisAgent:
             return "Please upload a resume first."
 
         sections_str = ", ".join(sections)
+        prompt = f"""Analyze this resume and suggest specific improvements for: {sections_str}
 
-        prompt = f"""
-        Analyze this resume and suggest specific improvements for these sections: {sections_str}
-        
-        For each section, provide:
-        - ISSUE: What is wrong or weak
-        - BEFORE: Example of current weak content
-        - AFTER: Example of improved content
-        
-        Be specific and actionable.
-        
-        Resume:
-        {self.resume_text[:3000]}
-        """
+For each section provide:
+- ISSUE: What is wrong or weak
+- BEFORE: Example of current weak content
+- AFTER: Example of improved content
 
+Resume:
+{self.resume_text[:3000]}"""
         response = self.llm.invoke(prompt)
         return response.content
 
@@ -209,20 +171,15 @@ class ResumeAnalysisAgent:
             return "Please upload a resume first."
 
         jd_section = f"\nJob Description:\n{jd_text[:1500]}" if jd_text else ""
+        prompt = f"""Rewrite and improve this resume for a {job_role} position.
+Make it ATS-optimized, professional, and tailored to the role.
+Use markdown formatting with clear sections.
+{jd_section}
 
-        prompt = f"""
-        Rewrite and improve this resume for a {job_role} position.
-        Make it ATS-optimized, professional, and tailored to the role.
-        Use markdown formatting with clear sections.
-        Enhance descriptions with strong action verbs and quantifiable results.
-        {jd_section}
-        
-        Original Resume:
-        {self.resume_text[:3000]}
-        
-        Generate the improved resume in markdown format:
-        """
+Original Resume:
+{self.resume_text[:3000]}
 
+Generate the improved resume in markdown:"""
         response = self.llm.invoke(prompt)
         return response.content
 
