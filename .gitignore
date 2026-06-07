@@ -8,3 +8,4 @@ faiss_index/
 .claude/
 node_modules/
 dist/
+web/.vite/
