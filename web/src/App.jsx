@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { BarChart2, MessageCircle, HelpCircle, Lightbulb, Wand2 } from 'lucide-react'
+import ModeSelector from './components/ModeSelector'
 import NavBar from './components/NavBar'
 import Hero from './components/Hero'
 import Sidebar from './components/Sidebar'
 import TabNav from './components/TabNav'
+import HRMode from './components/HRMode'
 import AnalysisTab from './components/tabs/AnalysisTab'
 import ChatTab from './components/tabs/ChatTab'
 import QuestionsTab from './components/tabs/QuestionsTab'
@@ -19,49 +21,14 @@ const TABS = [
 ]
 
 const FEATURES = [
-  {
-    Icon: BarChart2,
-    title: 'ATS Analysis',
-    desc: 'Score your resume against any job posting with our intelligent keyword engine.',
-    topColor: '#6366f1',
-    iconBg: 'bg-indigo-50',
-    iconColor: 'text-indigo-500',
-  },
-  {
-    Icon: MessageCircle,
-    title: 'AI Resume Chat',
-    desc: 'Ask anything about your experience — get instant, contextual answers.',
-    topColor: '#8b5cf6',
-    iconBg: 'bg-violet-50',
-    iconColor: 'text-violet-500',
-  },
-  {
-    Icon: HelpCircle,
-    title: 'Interview Questions',
-    desc: 'Tailored practice questions based on your role, skills, and company target.',
-    topColor: '#06b6d4',
-    iconBg: 'bg-cyan-50',
-    iconColor: 'text-cyan-500',
-  },
-  {
-    Icon: Lightbulb,
-    title: 'Smart Improvements',
-    desc: 'Actionable, prioritized suggestions to strengthen every section of your resume.',
-    topColor: '#f59e0b',
-    iconBg: 'bg-amber-50',
-    iconColor: 'text-amber-500',
-  },
-  {
-    Icon: Wand2,
-    title: 'Resume Generator',
-    desc: 'Create a polished, ATS-optimized resume from your experience in minutes.',
-    topColor: '#10b981',
-    iconBg: 'bg-emerald-50',
-    iconColor: 'text-emerald-500',
-  },
+  { Icon: BarChart2,     title: 'ATS Analysis',       desc: 'Score your resume against any job posting with our intelligent keyword engine.', topColor: '#6366f1', iconBg: 'bg-indigo-50', iconColor: 'text-indigo-500' },
+  { Icon: MessageCircle, title: 'AI Resume Chat',      desc: 'Ask anything about your experience — get instant, contextual answers.',          topColor: '#8b5cf6', iconBg: 'bg-violet-50', iconColor: 'text-violet-500' },
+  { Icon: HelpCircle,    title: 'Interview Questions', desc: 'Tailored practice questions based on your role, skills, and company target.',      topColor: '#06b6d4', iconBg: 'bg-cyan-50',   iconColor: 'text-cyan-500'   },
+  { Icon: Lightbulb,     title: 'Smart Improvements',  desc: 'Actionable, prioritized suggestions to strengthen every section.',                 topColor: '#f59e0b', iconBg: 'bg-amber-50',  iconColor: 'text-amber-500'  },
+  { Icon: Wand2,         title: 'Resume Generator',    desc: 'Create a polished, ATS-optimized resume from your experience in minutes.',        topColor: '#10b981', iconBg: 'bg-emerald-50',iconColor: 'text-emerald-500'},
 ]
 
-export default function App() {
+function CandidateApp({ onModeChange }) {
   const [activeTab,      setActiveTab]      = useState('analysis')
   const [resumeFile,     setResumeFile]     = useState(null)
   const [jdFile,         setJdFile]         = useState(null)
@@ -72,14 +39,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-white font-sans">
-
-      {/* Fixed top nav */}
-      <NavBar />
-
-      {/* Full-screen dark hero */}
+      <NavBar mode="candidate" onModeChange={onModeChange} />
       <Hero />
-
-      {/* Dark-to-white gradient bridge */}
       <div className="section-bridge" />
 
       {/* Features strip */}
@@ -90,17 +51,10 @@ export default function App() {
           </p>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             {FEATURES.map(({ Icon, title, desc, topColor, iconBg, iconColor }) => (
-              <div
-                key={title}
-                className={`rounded-2xl bg-white p-5 cursor-default transition-all duration-300 hover:-translate-y-1`}
-                style={{
-                  border: '1px solid #f1f5f9',
-                  borderTop: `3px solid ${topColor}`,
-                  boxShadow: '0 1px 4px rgba(0,0,0,.04)',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 12px 40px rgba(0,0,0,.1), 0 4px 16px rgba(0,0,0,.05)`)}
-                onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,.04)')}
-              >
+              <div key={title} className="rounded-2xl bg-white p-5 cursor-default transition-all duration-300 hover:-translate-y-1"
+                   style={{ border: '1px solid #f1f5f9', borderTop: `3px solid ${topColor}`, boxShadow: '0 1px 4px rgba(0,0,0,.04)' }}
+                   onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 12px 40px rgba(0,0,0,.1), 0 4px 16px rgba(0,0,0,.05)')}
+                   onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,.04)')}>
                 <div className={`w-9 h-9 rounded-xl ${iconBg} flex items-center justify-center mb-3`}>
                   <Icon size={18} className={iconColor} />
                 </div>
@@ -115,8 +69,6 @@ export default function App() {
       {/* Tool section */}
       <section id="tool" className="py-20 dot-grid" style={{ background: '#f8fafc' }}>
         <div className="max-w-7xl mx-auto px-6">
-
-          {/* section heading */}
           <div className="text-center mb-12">
             <span className="inline-block text-xs font-bold text-indigo-500 uppercase tracking-widest bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100 mb-4">
               AI Tools
@@ -130,12 +82,8 @@ export default function App() {
             </p>
           </div>
 
-          {/* sidebar + content */}
           <div className="flex gap-8 items-start">
-            <Sidebar
-              resumeFile={resumeFile} setResumeFile={setResumeFile}
-              jdFile={jdFile}         setJdFile={setJdFile}
-            />
+            <Sidebar resumeFile={resumeFile} setResumeFile={setResumeFile} jdFile={jdFile} setJdFile={setJdFile} />
             <div className="flex-1 min-w-0">
               <TabNav tabs={TABS} active={activeTab} onSelect={setActiveTab} />
               <div className="tab-panel">
@@ -170,4 +118,23 @@ export default function App() {
       </footer>
     </div>
   )
+}
+
+export default function App() {
+  const [mode, setMode] = useState(null) // null = selector, 'candidate', 'hr'
+
+  if (mode === null) {
+    return <ModeSelector onSelect={setMode} />
+  }
+
+  if (mode === 'hr') {
+    return (
+      <div className="min-h-screen bg-white font-sans">
+        <NavBar mode="hr" onModeChange={setMode} />
+        <HRMode />
+      </div>
+    )
+  }
+
+  return <CandidateApp onModeChange={setMode} />
 }
