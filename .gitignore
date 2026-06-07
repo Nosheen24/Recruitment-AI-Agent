@@ -5,3 +5,5 @@ __pycache__/
 faiss_index/
 *.pdf
 .DS_Stores
+.claude/
+node_modules/
