@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { EmptyState, PrimaryButton, ResultCard, SectionTitle, ErrorBanner } from '../shared'
 
 export default function GenerateTab({ resumeFile, jdFile }) {
-  const [jobRole, setJobRole] = useState('')
-  const [useJD,   setUseJD]   = useState(false)
-  const [result,  setResult]  = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
+  const [jobRole,    setJobRole]    = useState('')
+  const [useJD,      setUseJD]      = useState(false)
+  const [result,     setResult]     = useState('')
+  const [loading,    setLoading]    = useState(false)
+  const [pdfLoading, setPdfLoading] = useState(false)
+  const [error,      setError]      = useState(null)
 
   if (!resumeFile) {
     return (
@@ -34,6 +35,31 @@ export default function GenerateTab({ resumeFile, jdFile }) {
       setError(e.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const downloadPDF = async () => {
+    if (!result) return
+    setPdfLoading(true)
+    try {
+      const res = await fetch('/api/pdf/resume', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ markdown: result }),
+      })
+      if (!res.ok) throw new Error('PDF generation failed')
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = Object.assign(document.createElement('a'), {
+        href:     url,
+        download: `${jobRole.trim().replace(/\s+/g, '_')}_resume.pdf`,
+      })
+      document.body.appendChild(a); a.click()
+      document.body.removeChild(a); URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setPdfLoading(false)
     }
   }
 
@@ -79,22 +105,27 @@ export default function GenerateTab({ resumeFile, jdFile }) {
 
       {result && (
         <ResultCard>
+          {/* Preview */}
           <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">{result}</pre>
-          <div className="flex gap-4 mt-5 pt-4 border-t border-slate-100">
-            <a
-              href={`data:text/markdown;charset=utf-8,${encodeURIComponent(result)}`}
-              download="improved_resume.md"
-              className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-semibold transition-colors"
+
+          {/* Download actions */}
+          <div className="flex flex-wrap gap-3 mt-5 pt-4 border-t border-slate-100">
+            <button
+              onClick={downloadPDF}
+              disabled={pdfLoading}
+              className="inline-flex items-center gap-2 text-sm font-bold text-white px-5 py-2.5 rounded-xl transition-all active:scale-[.99] disabled:opacity-60"
+              style={{
+                background: pdfLoading
+                  ? '#94a3b8'
+                  : 'linear-gradient(135deg,#6366f1,#7c3aed)',
+                boxShadow: pdfLoading ? 'none' : '0 4px 14px rgba(99,102,241,.3)',
+              }}
             >
-              📥 Markdown
-            </a>
-            <a
-              href={`data:text/plain;charset=utf-8,${encodeURIComponent(result)}`}
-              download="improved_resume.txt"
-              className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-semibold transition-colors"
-            >
-              📥 Plain Text
-            </a>
+              {pdfLoading
+                ? <><span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />Generating PDF…</>
+                : <>📄 Download PDF Resume</>
+              }
+            </button>
           </div>
         </ResultCard>
       )}

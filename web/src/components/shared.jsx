@@ -74,6 +74,29 @@ export function SectionTitle({ children }) {
   )
 }
 
+export function GateBanner({ onShowLogin }) {
+  return (
+    <div className="rounded-2xl border border-indigo-200 p-8 text-center mt-4 animate-fadeIn"
+         style={{ background: 'linear-gradient(135deg,rgba(99,102,241,.06),rgba(139,92,246,.06))' }}>
+      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4 text-xl"
+           style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 4px 18px rgba(99,102,241,.35)' }}>
+        ✦
+      </div>
+      <h3 className="font-display font-bold text-slate-900 text-lg mb-2">Free limit reached</h3>
+      <p className="text-slate-500 text-sm mb-5 max-w-xs mx-auto leading-relaxed">
+        You've used your 3 free analyses. Create a free account for unlimited access — no credit card needed.
+      </p>
+      <button
+        onClick={onShowLogin}
+        className="px-7 py-2.5 rounded-xl text-white font-bold text-sm transition-all hover:scale-105"
+        style={{ background: 'linear-gradient(135deg,#6366f1,#7c3aed)', boxShadow: '0 4px 18px rgba(99,102,241,.35)' }}
+      >
+        Create Free Account →
+      </button>
+    </div>
+  )
+}
+
 export function ErrorBanner({ message }) {
   const isNetwork = message.includes('fetch')
   return (

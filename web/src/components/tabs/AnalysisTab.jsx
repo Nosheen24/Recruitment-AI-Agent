@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
-import { EmptyState, PrimaryButton, ErrorBanner, SectionTitle } from '../shared'
+import { EmptyState, PrimaryButton, ErrorBanner, SectionTitle, GateBanner } from '../shared'
+import { useGuestLimit } from '../../hooks/useGuestLimit'
+import { useAuth } from '../../context/AuthContext'
 
 /* ── count-up hook ──────────────────────────────────── */
 function useCountUp(target, duration = 1200) {
@@ -178,10 +180,13 @@ function Results({ result, onReset }) {
 }
 
 /* ── main tab ────────────────────────────────────────── */
-export default function AnalysisTab({ resumeFile, jdFile, analysisResult, setAnalysisResult }) {
-  const [mode,    setMode]    = useState('ats')
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
+export default function AnalysisTab({ resumeFile, jdFile, analysisResult, setAnalysisResult, onShowLogin }) {
+  const [mode,     setMode]     = useState('ats')
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState(null)
+  const [showGate, setShowGate] = useState(false)
+  const { isLimited, usesLeft, recordUse } = useGuestLimit()
+  const { authFetch } = useAuth()
 
   if (!resumeFile) {
     return (
@@ -194,15 +199,17 @@ export default function AnalysisTab({ resumeFile, jdFile, analysisResult, setAna
   }
 
   const handleAnalyze = async () => {
+    if (isLimited) { setShowGate(true); return }
     setLoading(true); setError(null)
     try {
       const fd = new FormData()
       fd.append('resume', resumeFile)
       if (jdFile) fd.append('jd', jdFile)
       fd.append('mode', mode)
-      const res = await fetch('/api/analyze', { method: 'POST', body: fd })
+      const res = await authFetch('/api/analyze', { method: 'POST', body: fd })
       if (!res.ok) throw new Error(await res.text())
       setAnalysisResult(await res.json())
+      recordUse()
     } catch (e) {
       setError(e.message)
     } finally {
@@ -246,7 +253,18 @@ export default function AnalysisTab({ resumeFile, jdFile, analysisResult, setAna
         )}
       </div>
 
-      <PrimaryButton onClick={handleAnalyze} loading={loading}>🔍 Analyze Resume</PrimaryButton>
+      {showGate
+        ? <GateBanner onShowLogin={onShowLogin} />
+        : <>
+            <PrimaryButton onClick={handleAnalyze} loading={loading}>🔍 Analyze Resume</PrimaryButton>
+            {usesLeft !== null && usesLeft > 0 && (
+              <p className="text-xs text-center text-slate-400 mt-2">
+                {usesLeft} free {usesLeft === 1 ? 'analysis' : 'analyses'} remaining —{' '}
+                <button onClick={onShowLogin} className="text-indigo-500 hover:underline font-semibold">sign up for unlimited</button>
+              </p>
+            )}
+          </>
+      }
 
       {error && <ErrorBanner message={error} />}
 

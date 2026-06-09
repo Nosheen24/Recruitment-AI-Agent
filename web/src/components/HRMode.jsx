@@ -1,6 +1,8 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Upload, X, Download, Users, Trophy, FileText } from 'lucide-react'
-import { ErrorBanner, Spinner } from './shared'
+import { ErrorBanner, Spinner, GateBanner } from './shared'
+import { useAuth } from '../context/AuthContext'
+import { useGuestLimit } from '../hooks/useGuestLimit'
 
 /* ── helpers ─────────────────────────────────────────── */
 const cleanName = filename => filename.replace(/\.(pdf|txt)$/i, '')
@@ -438,6 +440,20 @@ function downloadCSV(data) {
   document.body.removeChild(a); URL.revokeObjectURL(url)
 }
 
+async function downloadPDF(data) {
+  const res = await fetch('/api/pdf/screening', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(data),
+  })
+  if (!res.ok) { alert('PDF generation failed'); return }
+  const blob = await res.blob()
+  const url  = URL.createObjectURL(blob)
+  const a    = Object.assign(document.createElement('a'), { href: url, download: 'candidate_screening_report.pdf' })
+  document.body.appendChild(a); a.click()
+  document.body.removeChild(a); URL.revokeObjectURL(url)
+}
+
 /* ── results panel ────────────────────────────────────── */
 function ResultsPanel({ data }) {
   const { results, top_n: topN, total, skills_analyzed } = data
@@ -455,14 +471,22 @@ function ResultsPanel({ data }) {
         selected={selectedCount}
       />
 
-      {/* CSV download */}
-      <div className="flex justify-end">
+      {/* Download buttons */}
+      <div className="flex justify-end gap-3">
         <button
-          onClick={() => downloadCSV(data)}
-          className="btn-primary inline-flex items-center gap-2 text-white font-bold text-sm px-5 py-2.5 rounded-xl"
+          onClick={() => downloadPDF(data)}
+          className="inline-flex items-center gap-2 text-white font-bold text-sm px-5 py-2.5 rounded-xl transition-all"
+          style={{ background: 'linear-gradient(135deg,#6366f1,#7c3aed)', boxShadow: '0 4px 14px rgba(99,102,241,.3)' }}
         >
           <Download size={15} />
-          Download CSV Report
+          Download PDF Report
+        </button>
+        <button
+          onClick={() => downloadCSV(data)}
+          className="inline-flex items-center gap-2 font-bold text-sm px-5 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all"
+        >
+          <Download size={15} />
+          CSV
         </button>
       </div>
 
@@ -489,26 +513,43 @@ function ResultsPanel({ data }) {
 }
 
 /* ── main HR mode page ────────────────────────────────── */
-export default function HRMode() {
-  const [files,   setFiles]   = useState([])
-  const [jdText,  setJdText]  = useState('')
-  const [topN,    setTopN]    = useState(5)
-  const [loading, setLoading] = useState(false)
-  const [results, setResults] = useState(null)
-  const [error,   setError]   = useState(null)
+export default function HRMode({ restoredSession, onShowLogin }) {
+  const { token, authFetch } = useAuth()
+  const { isLimited, usesLeft, recordUse } = useGuestLimit()
+  const [files,    setFiles]    = useState([])
+  const [jdText,   setJdText]   = useState('')
+  const [topN,     setTopN]     = useState(5)
+  const [loading,  setLoading]  = useState(false)
+  const [results,  setResults]  = useState(null)
+  const [error,    setError]    = useState(null)
+  const [savedMsg, setSavedMsg] = useState(null)
+  const [showGate, setShowGate] = useState(false)
+
+  // Restore a previous session when provided from history
+  useEffect(() => {
+    if (restoredSession) {
+      setResults(restoredSession.results)
+      if (restoredSession.results?.top_n) setTopN(restoredSession.results.top_n)
+    }
+  }, [restoredSession])
 
   const handleScreen = async () => {
+    if (isLimited) { setShowGate(true); return }
     if (files.length < 2) { setError('Upload at least 2 resumes.'); return }
     if (!jdText.trim())   { setError('Paste a job description.'); return }
-    setLoading(true); setError(null); setResults(null)
+    setLoading(true); setError(null); setResults(null); setSavedMsg(null); setShowGate(false)
     try {
       const fd = new FormData()
       files.forEach(f => fd.append('resumes', f))
       fd.append('jd_text', jdText)
       fd.append('top_n', String(topN))
-      const res = await fetch('/api/screen', { method: 'POST', body: fd })
+      const fetchFn = token ? authFetch : fetch
+      const res = await fetchFn('/api/screen', { method: 'POST', body: fd })
       if (!res.ok) throw new Error(await res.text())
-      setResults(await res.json())
+      const data = await res.json()
+      setResults(data)
+      recordUse()
+      if (token) setSavedMsg('Session saved to your history.')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -570,9 +611,29 @@ export default function HRMode() {
 
           <div className="flex-1 min-w-0">
             {error && <div className="mb-4"><ErrorBanner message={error} /></div>}
-            {loading   ? <LoadingPanel count={files.length} />
+            {savedMsg && (
+              <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
+                ✓ {savedMsg}
+              </div>
+            )}
+            {restoredSession && results && !loading && (
+              <div className="mb-4 bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
+                📂 Restored session: <strong>{restoredSession.name}</strong>
+              </div>
+            )}
+            {showGate  ? <GateBanner onShowLogin={onShowLogin} />
+             : loading  ? <LoadingPanel count={files.length} />
              : results  ? <ResultsPanel data={results} />
-             :             <HREmptyState />}
+             :             <>
+                             <HREmptyState />
+                             {usesLeft !== null && usesLeft > 0 && (
+                               <p className="text-xs text-center text-slate-400 mt-4">
+                                 {usesLeft} free {usesLeft === 1 ? 'screening' : 'screenings'} remaining —{' '}
+                                 <button onClick={onShowLogin} className="text-indigo-500 hover:underline font-semibold">sign up for unlimited</button>
+                               </p>
+                             )}
+                           </>
+            }
           </div>
         </div>
       </div>

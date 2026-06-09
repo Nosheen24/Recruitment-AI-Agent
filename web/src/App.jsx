@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { BarChart2, MessageCircle, HelpCircle, Lightbulb, Wand2 } from 'lucide-react'
+import { AuthProvider } from './context/AuthContext'
 import ModeSelector from './components/ModeSelector'
 import NavBar from './components/NavBar'
 import Hero from './components/Hero'
@@ -11,6 +12,8 @@ import ChatTab from './components/tabs/ChatTab'
 import QuestionsTab from './components/tabs/QuestionsTab'
 import ImprovementsTab from './components/tabs/ImprovementsTab'
 import GenerateTab from './components/tabs/GenerateTab'
+import LoginPage from './components/auth/LoginPage'
+import HistoryPanel from './components/HistoryPanel'
 
 const TABS = [
   { id: 'analysis',     icon: '📊', label: 'Analysis'     },
@@ -28,18 +31,18 @@ const FEATURES = [
   { Icon: Wand2,         title: 'Resume Generator',    desc: 'Create a polished, ATS-optimized resume from your experience in minutes.',        topColor: '#10b981', iconBg: 'bg-emerald-50',iconColor: 'text-emerald-500'},
 ]
 
-function CandidateApp({ onModeChange }) {
+function CandidateApp({ onModeChange, onShowLogin, onShowHistory }) {
   const [activeTab,      setActiveTab]      = useState('analysis')
   const [resumeFile,     setResumeFile]     = useState(null)
   const [jdFile,         setJdFile]         = useState(null)
   const [analysisResult, setAnalysisResult] = useState(null)
   const [chatHistory,    setChatHistory]    = useState([])
 
-  const shared = { resumeFile, jdFile, analysisResult, setAnalysisResult, chatHistory, setChatHistory }
+  const shared = { resumeFile, jdFile, analysisResult, setAnalysisResult, chatHistory, setChatHistory, onShowLogin }
 
   return (
     <div className="min-h-screen bg-white font-sans">
-      <NavBar mode="candidate" onModeChange={onModeChange} />
+      <NavBar mode="candidate" onModeChange={onModeChange} onShowLogin={onShowLogin} onShowHistory={onShowHistory} />
       <Hero />
       <div className="section-bridge" />
 
@@ -120,21 +123,58 @@ function CandidateApp({ onModeChange }) {
   )
 }
 
+function HRApp({ onModeChange, onShowLogin, onShowHistory, restoredSession }) {
+  return (
+    <div className="min-h-screen bg-white font-sans">
+      <NavBar mode="hr" onModeChange={onModeChange} onShowLogin={onShowLogin} onShowHistory={onShowHistory} />
+      <HRMode restoredSession={restoredSession} onShowLogin={onShowLogin} />
+    </div>
+  )
+}
+
 export default function App() {
-  const [mode, setMode] = useState(null) // null = selector, 'candidate', 'hr'
+  const [mode,            setMode]            = useState(null)
+  const [showLogin,       setShowLogin]       = useState(false)
+  const [showHistory,     setShowHistory]     = useState(false)
+  const [restoredSession, setRestoredSession] = useState(null)
 
-  if (mode === null) {
-    return <ModeSelector onSelect={setMode} />
+  const handleRestoreHR = (results, name) => {
+    setRestoredSession({ results, name })
+    setMode('hr')
   }
 
-  if (mode === 'hr') {
-    return (
-      <div className="min-h-screen bg-white font-sans">
-        <NavBar mode="hr" onModeChange={setMode} />
-        <HRMode />
-      </div>
-    )
-  }
+  return (
+    <AuthProvider>
+      {/* Mode selector */}
+      {mode === null && <ModeSelector onSelect={setMode} />}
 
-  return <CandidateApp onModeChange={setMode} />
+      {/* Candidate mode */}
+      {mode === 'candidate' && (
+        <CandidateApp
+          onModeChange={setMode}
+          onShowLogin={() => setShowLogin(true)}
+          onShowHistory={() => setShowHistory(true)}
+        />
+      )}
+
+      {/* HR mode */}
+      {mode === 'hr' && (
+        <HRApp
+          onModeChange={m => { setMode(m); if (m !== 'hr') setRestoredSession(null) }}
+          onShowLogin={() => setShowLogin(true)}
+          onShowHistory={() => setShowHistory(true)}
+          restoredSession={restoredSession}
+        />
+      )}
+
+      {/* Overlays */}
+      {showLogin   && <LoginPage   onClose={() => setShowLogin(false)} />}
+      {showHistory && (
+        <HistoryPanel
+          onClose={() => setShowHistory(false)}
+          onRestoreHR={handleRestoreHR}
+        />
+      )}
+    </AuthProvider>
+  )
 }

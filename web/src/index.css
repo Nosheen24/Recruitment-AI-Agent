@@ -143,3 +143,12 @@ body { background: #ffffff; }
   z-index: 5;
   margin-top: -1px;
 }
+
+/* ── slide-in for history panel ────────────────────── */
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.animate-slideIn {
+  animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}

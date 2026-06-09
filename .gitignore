@@ -1,11 +1,15 @@
 venv/
 __pycache__/
 *.pyc
+*.pyo
 .env
 faiss_index/
 *.pdf
+.DS_Store
 .DS_Stores
 .claude/
 node_modules/
 dist/
 web/.vite/
+*.egg-info/
+.pytest_cache/

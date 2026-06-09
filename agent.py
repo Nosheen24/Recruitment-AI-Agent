@@ -11,6 +11,10 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 
 load_dotenv()
 
+# Load once at startup — the model is read-only so it is safe to share across requests
+_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+
 class ResumeAnalysisAgent:
     def __init__(self):
         self.groq_api_key = os.getenv("GROQ_API_KEY")
@@ -23,12 +27,10 @@ class ResumeAnalysisAgent:
         self.llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             groq_api_key=self.groq_api_key,
-            temperature=0.3
+            temperature=0
         )
 
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2"
-        )
+        self.embeddings = _embeddings
 
     def extract_text_from_pdf(self, pdf_path):
         reader = PdfReader(pdf_path)

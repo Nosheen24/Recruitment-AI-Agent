@@ -1,31 +1,101 @@
 """
-FastAPI backend — wraps ResumeAnalysisAgent for the React frontend.
-Run:  uvicorn api:app --reload --port 8000
+FastAPI backend — Recruitment AI
+Dev:  uvicorn api:app --reload --port 8000
+Prod: uvicorn api:app --host 0.0.0.0 --port $PORT
 """
 
-import io
 import json
-from typing import List
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from agent import ResumeAnalysisAgent
+import os
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
 
-app = FastAPI(title="Recruitment AI API", version="1.0.0")
+from fastapi import (
+    APIRouter, Depends, FastAPI, File, Form, Header,
+    HTTPException, UploadFile,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from jose import JWTError, jwt
+import bcrypt as _bcrypt
+
+from agent import ResumeAnalysisAgent
+import database as db
+from pdf_utils import generate_resume_pdf, generate_screening_report_pdf
+
+# ── App ───────────────────────────────────────────────────────────────────────
+app = FastAPI(title="Recruitment AI API", version="2.0.0")
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+]
+_prod = os.getenv("PRODUCTION_DOMAIN")
+if _prod:
+    _origins.append(_prod)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# one shared agent instance (stateful: holds vector store + texts)
-_agent = ResumeAnalysisAgent()
+# ── Auth config ───────────────────────────────────────────────────────────────
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-use-a-long-random-string")
+ALGORITHM  = "HS256"
+TOKEN_DAYS = 7
 
+
+def _hash(pw: str) -> str:
+    return _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
+
+
+def _verify(pw: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(pw.encode(), hashed.encode())
+
+
+def _create_token(user_id: str) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(days=TOKEN_DAYS)
+    return jwt.encode({"sub": user_id, "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _decode_token(token: str) -> Optional[str]:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+
+async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, detail="Not authenticated")
+    uid = _decode_token(authorization[7:])
+    if not uid:
+        raise HTTPException(401, detail="Invalid or expired token")
+    user = db.get_user_by_id(uid)
+    if not user:
+        raise HTTPException(401, detail="User not found")
+    return user
+
+
+async def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[str]:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    return _decode_token(authorization[7:])
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 class _FileAdapter:
-    """Wraps FastAPI UploadFile bytes to match the Streamlit UploadedFile interface."""
     def __init__(self, content_type: str, data: bytes, filename: str):
         self.type = content_type or ("application/pdf" if filename.endswith(".pdf") else "text/plain")
         self._data = data
@@ -34,118 +104,268 @@ class _FileAdapter:
         return self._data
 
 
-# ── helpers ──────────────────────────────────────────────────────
-
 async def _read_file(f: UploadFile) -> _FileAdapter:
     data = await f.read()
     return _FileAdapter(f.content_type or "", data, f.filename or "")
 
 
-# ── routes ───────────────────────────────────────────────────────
+def _pdf_response(data: bytes, filename: str) -> Response:
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
-@app.post("/analyze")
+
+# ── Router (all routes live under /api) ───────────────────────────────────────
+router = APIRouter(prefix="/api")
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    name:     str
+    email:    str
+    password: str
+
+
+@router.post("/auth/register")
+async def register(body: RegisterRequest):
+    if not db.is_available():
+        raise HTTPException(503, detail="Database not configured. Add SUPABASE_URL and SUPABASE_SERVICE_KEY to your .env file.")
+    if len(body.password) < 6:
+        raise HTTPException(400, detail="Password must be at least 6 characters.")
+    existing = db.get_user_by_email(body.email)
+    if existing:
+        raise HTTPException(400, detail="An account with this email already exists.")
+    user = db.create_user(body.email, _hash(body.password), body.name.strip())
+    if not user:
+        raise HTTPException(500, detail="Could not create account. Please try again.")
+    token = _create_token(user["id"])
+    return {
+        "access_token": token,
+        "token_type":   "bearer",
+        "user": {"id": user["id"], "email": user["email"], "name": user["name"]},
+    }
+
+
+@router.post("/auth/login")
+async def login(form: OAuth2PasswordRequestForm = Depends()):
+    if not db.is_available():
+        raise HTTPException(503, detail="Database not configured.")
+    user = db.get_user_by_email(form.username)
+    if not user or not _verify(form.password, user["password_hash"]):
+        raise HTTPException(401, detail="Incorrect email or password.")
+    token = _create_token(user["id"])
+    return {
+        "access_token": token,
+        "token_type":   "bearer",
+        "user": {"id": user["id"], "email": user["email"], "name": user["name"]},
+    }
+
+
+@router.get("/auth/me")
+async def me(current_user: dict = Depends(get_current_user)):
+    return current_user
+
+
+# ── History ───────────────────────────────────────────────────────────────────
+
+@router.get("/history/analyses")
+async def history_analyses(current_user: dict = Depends(get_current_user)):
+    return db.get_user_analyses(current_user["id"])
+
+
+@router.get("/history/hr-sessions")
+async def history_hr_sessions(current_user: dict = Depends(get_current_user)):
+    return db.get_user_hr_sessions(current_user["id"])
+
+
+@router.get("/history/hr-sessions/{session_id}")
+async def get_hr_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    session = db.get_hr_session(session_id, current_user["id"])
+    if not session:
+        raise HTTPException(404, detail="Session not found.")
+    return session
+
+
+@router.post("/history/hr-sessions")
+async def save_hr_session(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    results  = body.get("results", {})
+    jd_text  = body.get("jd_text", "")
+    total    = results.get("total", 0)
+    name     = body.get("name") or f"{total} candidates — {datetime.now().strftime('%b %d, %Y')}"
+    saved    = db.save_hr_session(current_user["id"], name, jd_text, results)
+    if not saved:
+        raise HTTPException(500, detail="Could not save session.")
+    return saved
+
+
+# ── PDF ───────────────────────────────────────────────────────────────────────
+
+class ResumePDFRequest(BaseModel):
+    markdown: str
+
+
+@router.post("/pdf/resume")
+async def resume_pdf(body: ResumePDFRequest):
+    pdf = generate_resume_pdf(body.markdown)
+    return _pdf_response(pdf, "improved_resume.pdf")
+
+
+@router.post("/pdf/screening")
+async def screening_pdf(body: dict):
+    pdf = generate_screening_report_pdf(body)
+    return _pdf_response(pdf, "candidate_screening_report.pdf")
+
+
+# ── Core AI ───────────────────────────────────────────────────────────────────
+
+@router.post("/analyze")
 async def analyze(
     resume: UploadFile = File(...),
     jd:     UploadFile = File(None),
     mode:   str        = Form("ats"),
+    user_id: Optional[str] = Depends(get_optional_user),
 ):
-    resume_text = _agent.extract_text_from(await _read_file(resume))
-    _agent.resume_text = resume_text
-    _agent.create_rag_vector_store(resume_text)
+    agent = ResumeAnalysisAgent()
+    resume_text = agent.extract_text_from(await _read_file(resume))
+    agent.resume_text = resume_text
+    agent.create_rag_vector_store(resume_text)
 
     jd_text = None
     if jd and jd.filename:
-        jd_text = _agent.extract_text_from(await _read_file(jd))
-        _agent.jd_text = jd_text
+        jd_text = agent.extract_text_from(await _read_file(jd))
 
-    return _agent.analyze_resume(resume_text, jd_text, mode=mode)
+    result = agent.analyze_resume(resume_text, jd_text, mode=mode)
+    agent.cleanup()
+
+    db.save_analysis(
+        score=result["score"],
+        selected=result["selected"],
+        strengths=result["strengths"],
+        weaknesses=result["weaknesses"],
+        total_skills=result["total_skills"],
+        filename=resume.filename,
+        mode=mode,
+        user_id=user_id,
+    )
+
+    return result
 
 
-@app.post("/chat")
+@router.post("/chat")
 async def chat(
     resume:   UploadFile = File(...),
     question: str        = Form(...),
 ):
-    # re-index if the agent's vector store is stale or empty
-    if not _agent.vector_store:
-        text = _agent.extract_text_from(await _read_file(resume))
-        _agent.resume_text = text
-        _agent.create_rag_vector_store(text)
-    return {"answer": _agent.ask_question(question)}
+    agent = ResumeAnalysisAgent()
+    text  = agent.extract_text_from(await _read_file(resume))
+    agent.resume_text = text
+    agent.create_rag_vector_store(text)
+    answer = agent.ask_question(question)
+    agent.cleanup()
+    return {"answer": answer}
 
 
-@app.post("/questions")
+@router.post("/questions")
 async def questions(
     resume:     UploadFile = File(...),
     type:       str        = Form("Technical"),
     difficulty: str        = Form("Medium"),
     count:      str        = Form("5"),
 ):
-    if not _agent.resume_text:
-        _agent.resume_text = _agent.extract_text_from(await _read_file(resume))
-    return {"questions": _agent.generate_interview_questions(type, difficulty, int(count))}
+    agent = ResumeAnalysisAgent()
+    agent.resume_text = agent.extract_text_from(await _read_file(resume))
+    result = agent.generate_interview_questions(type, difficulty, int(count))
+    agent.cleanup()
+    return {"questions": result}
 
 
-@app.post("/improvements")
+@router.post("/improvements")
 async def improvements(
     resume:   UploadFile = File(...),
     sections: str        = Form('["Skills","Overall Structure"]'),
 ):
-    if not _agent.resume_text:
-        _agent.resume_text = _agent.extract_text_from(await _read_file(resume))
-    return {"suggestions": _agent.suggest_improvements(json.loads(sections))}
+    agent = ResumeAnalysisAgent()
+    agent.resume_text = agent.extract_text_from(await _read_file(resume))
+    result = agent.suggest_improvements(json.loads(sections))
+    agent.cleanup()
+    return {"suggestions": result}
 
 
-@app.post("/generate")
+@router.post("/generate")
 async def generate(
     resume:   UploadFile = File(...),
     job_role: str        = Form(...),
     jd:       UploadFile = File(None),
 ):
-    if not _agent.resume_text:
-        _agent.resume_text = _agent.extract_text_from(await _read_file(resume))
+    agent = ResumeAnalysisAgent()
+    agent.resume_text = agent.extract_text_from(await _read_file(resume))
     jd_text = None
     if jd and jd.filename:
-        jd_text = _agent.extract_text_from(await _read_file(jd))
-    return {"improved_resume": _agent.generate_improved_resume(job_role, jd_text)}
+        jd_text = agent.extract_text_from(await _read_file(jd))
+    result = agent.generate_improved_resume(job_role, jd_text)
+    agent.cleanup()
+    return {"improved_resume": result}
 
 
-@app.post("/screen")
+@router.post("/screen")
 async def screen(
     resumes: List[UploadFile] = File(...),
-    jd_text: str = Form(...),
-    top_n: int = Form(5),
+    jd_text: str              = Form(...),
+    top_n:   int              = Form(5),
+    user_id: Optional[str]   = Depends(get_optional_user),
 ):
-    """Bulk HR screening: rank multiple resumes against a job description."""
     if len(resumes) < 2:
-        raise HTTPException(status_code=400, detail="Upload at least 2 resumes to screen.")
+        raise HTTPException(400, detail="Upload at least 2 resumes to screen.")
 
-    skills = _agent.extract_skills_from_jd(jd_text)
-    total_skills = len(skills)
-
+    agent      = ResumeAnalysisAgent()
+    skills     = agent.extract_skills_from_jd(jd_text)
+    total_s    = len(skills)
     candidates = []
+
     for rf in resumes:
-        adapter = await _read_file(rf)
-        text = _agent.extract_text_from(adapter)
-        strengths, weaknesses = _agent.analyze_all_skills_at_once(skills, text)
-        score = int((len(strengths) / total_skills) * 100) if total_skills > 0 else 0
+        adapter    = await _read_file(rf)
+        text       = agent.extract_text_from(adapter)
+        str_s, wk  = agent.analyze_all_skills_at_once(skills, text)
+        score      = int((len(str_s) / total_s) * 100) if total_s > 0 else 0
         candidates.append({
-            "filename": rf.filename or f"Resume {len(candidates) + 1}",
-            "score": score,
-            "selected": score >= _agent.cutoff_score,
-            "strengths": strengths,
-            "weaknesses": weaknesses,
+            "filename":  rf.filename or f"Resume {len(candidates)+1}",
+            "score":     score,
+            "selected":  score >= agent.cutoff_score,
+            "strengths": str_s,
+            "weaknesses": wk,
         })
 
+    agent.cleanup()
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    return {
-        "results": candidates,
-        "top_n": min(int(top_n), len(candidates)),
-        "total": len(candidates),
-        "skills_analyzed": skills,
+    results = {
+        "results":          candidates,
+        "top_n":            min(int(top_n), len(candidates)),
+        "total":            len(candidates),
+        "skills_analyzed":  skills,
     }
 
+    if user_id:
+        name = f"{len(candidates)} candidates — {datetime.now().strftime('%b %d, %Y')}"
+        db.save_hr_session(user_id, name, jd_text, results)
 
-@app.get("/health")
+    return results
+
+
+@router.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "db": db.is_available()}
+
+
+# ── Register router ───────────────────────────────────────────────────────────
+app.include_router(router)
+
+# ── Serve built frontend (production) ─────────────────────────────────────────
+# Must come AFTER all API routes so /api/* is handled first.
+if os.path.exists("web/dist"):
+    app.mount("/", StaticFiles(directory="web/dist", html=True), name="static")
