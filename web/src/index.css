@@ -144,6 +144,27 @@ body { background: #ffffff; }
   margin-top: -1px;
 }
 
+/* ── landing feature card hover ────────────────────── */
+.landing-feature-card {
+  transition: border-color .3s ease, box-shadow .3s ease, transform .3s ease;
+  cursor: default;
+}
+.landing-feature-card:hover {
+  border-color: rgba(99,102,241,.4) !important;
+  box-shadow: 0 0 28px rgba(99,102,241,.15), 0 8px 32px rgba(0,0,0,.3);
+  transform: translateY(-4px);
+}
+
+/* ── landing mode card hover ────────────────────────── */
+.landing-mode-card {
+  transition: border-color .3s ease, box-shadow .35s ease, transform .3s ease;
+}
+.landing-mode-card:hover {
+  border-color: rgba(99,102,241,.45) !important;
+  box-shadow: 0 0 40px rgba(99,102,241,.18), 0 12px 48px rgba(0,0,0,.35);
+  transform: translateY(-4px);
+}
+
 /* ── slide-in for history panel ────────────────────── */
 @keyframes slideIn {
   from { transform: translateX(100%); opacity: 0; }

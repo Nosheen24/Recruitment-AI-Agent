@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { BarChart2, MessageCircle, HelpCircle, Lightbulb, Wand2 } from 'lucide-react'
 import { AuthProvider } from './context/AuthContext'
-import ModeSelector from './components/ModeSelector'
+import LandingPage from './components/LandingPage'
 import NavBar from './components/NavBar'
 import Hero from './components/Hero'
 import Sidebar from './components/Sidebar'
@@ -145,8 +145,8 @@ export default function App() {
 
   return (
     <AuthProvider>
-      {/* Mode selector */}
-      {mode === null && <ModeSelector onSelect={setMode} />}
+      {/* Landing page */}
+      {mode === null && <LandingPage onSelect={setMode} onShowLogin={() => setShowLogin(true)} />}
 
       {/* Candidate mode */}
       {mode === 'candidate' && (
