@@ -4,15 +4,9 @@ import re
 import tempfile
 from dotenv import load_dotenv
 from pypdf import PdfReader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_groq import ChatGroq
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
 
 load_dotenv()
-
-# Load once at startup — the model is read-only so it is safe to share across requests
-_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 
 class ResumeAnalysisAgent:
@@ -29,8 +23,6 @@ class ResumeAnalysisAgent:
             groq_api_key=self.groq_api_key,
             temperature=0
         )
-
-        self.embeddings = _embeddings
 
     def extract_text_from_pdf(self, pdf_path):
         reader = PdfReader(pdf_path)
@@ -52,12 +44,9 @@ class ResumeAnalysisAgent:
                 return f.read()
 
     def create_rag_vector_store(self, text):
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50
-        )
-        chunks = splitter.split_text(text)
-        self.vector_store = FAISS.from_texts(chunks, self.embeddings)
+        # Store text directly — no vector DB needed for single-resume context
+        self.resume_text = text
+        self.vector_store = True
         return self.vector_store
 
     def extract_skills_from_jd(self, jd_text):
@@ -121,16 +110,15 @@ Return ONLY the JSON:"""
         }
 
     def ask_question(self, question):
-        if not self.vector_store:
+        if not self.resume_text:
             return "Please upload a resume first."
 
-        docs = self.vector_store.similarity_search(question, k=3)
-        context = "\n".join([d.page_content for d in docs])
-
-        prompt = f"""Use the resume context below to answer the question accurately.
+        prompt = f"""Use the resume below to answer the question accurately.
 If the answer is not in the resume, say "This information is not in the resume."
 
-Context: {context}
+Resume:
+{self.resume_text[:4000]}
+
 Question: {question}
 Answer:"""
         response = self.llm.invoke(prompt)
