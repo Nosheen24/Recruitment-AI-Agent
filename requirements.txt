@@ -8,10 +8,9 @@ python-jose[cryptography]==3.3.0
 bcrypt>=4.0.0
 
 # LangChain
-langchain==0.1.16
-langchain-community==0.0.32
+langchain-community==0.2.16
 langchain-groq==0.1.9
-langchain-text-splitters==0.0.2
+langchain-text-splitters==0.2.4
 
 # AI / Embeddings
 sentence-transformers==2.7.0
