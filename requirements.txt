@@ -15,7 +15,7 @@ langchain-text-splitters==0.0.2
 
 # AI / Embeddings
 sentence-transformers==2.7.0
-faiss-cpu==1.8.0
+faiss-cpu>=1.7.4
 
 # PDF
 pypdf==4.2.0
